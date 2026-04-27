@@ -315,6 +315,26 @@ fn deduplicatedImport(
         // clear is_unused so the import is actually emitted.
         p.import_records.items[stmt.import_record_index].flags.is_unused = false;
 
+        // Redirect any named_imports entries that pointed at the dropped
+        // record to the surviving one. Without this, downstream passes
+        // (notably scheduleBarrelDeferredImports in barrel_imports.zig)
+        // read the dropped record's path — which was never resolved
+        // because is_unused records are skipped by resolveImportRecords —
+        // and fail to find the target in the path map. named_imports is
+        // populated by ImportScanner before HMR dedup runs, so the stale
+        // indices persist here and must be rewritten. Both js_parser.P and
+        // bundler/AstBuilder expose a `named_imports` field; @hasField
+        // keeps this comptime-conditional for any future duck-typed caller.
+        if (import_record_index != stmt.import_record_index and
+            @hasField(@typeInfo(@TypeOf(p)).pointer.child, "named_imports"))
+        {
+            for (p.named_imports.values()) |*ni| {
+                if (ni.import_record_index == import_record_index) {
+                    ni.import_record_index = stmt.import_record_index;
+                }
+            }
+        }
+
         if (items.len > 0) {
             if (stmt.items.len == 0) {
                 stmt.items = items;

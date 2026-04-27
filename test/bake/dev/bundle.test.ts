@@ -652,3 +652,56 @@ devTest("barrel optimization: two export-from blocks pointing to the same source
     await c.expectMessage("got: function");
   },
 });
+
+devTest("barrel optimization: consumer with two imports from the same barrel (#29781)", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    // index.ts only imports one export directly. consumer-lib pulls in the
+    // rest through two separate import statements, which mirrors what
+    // @apollo/client's cache/inmemory/policies.js does (it has two imports
+    // from @apollo/client/utilities/internal).
+    "index.ts": `
+      import { run } from 'consumer-lib';
+      console.log('result: ' + run());
+    `,
+    "node_modules/consumer-lib/package.json": JSON.stringify({
+      name: "consumer-lib",
+      version: "1.0.0",
+      main: "./index.js",
+    }),
+    // Two imports from 'barrel-lib'. ConvertESMExportsForHmr dedups the
+    // second record; without the fix, its named_imports entries still
+    // point at the now-is_unused record, whose path was never resolved,
+    // so scheduleBarrelDeferredImports fails to find Two/Three in the
+    // path map and the barrel defers those submodules. The empty-shim
+    // emitter in convertStmtsForChunkForDevServer then declares
+    // \`var import_two = {}\`, leaving \`hmr.exports.Two\` undefined.
+    "node_modules/consumer-lib/index.js": `
+      import { One } from 'barrel-lib';
+      import { Two, Three } from 'barrel-lib';
+      export function run() {
+        return [One(), Two(), Three()].join(',');
+      }
+    `,
+    "node_modules/barrel-lib/package.json": JSON.stringify({
+      name: "barrel-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/barrel-lib/index.js": `
+      export { One } from './one.js';
+      export { Two } from './two.js';
+      export { Three } from './three.js';
+      export { Four } from './four.js';
+    `,
+    "node_modules/barrel-lib/one.js": `export function One() { return 'one'; }`,
+    "node_modules/barrel-lib/two.js": `export function Two() { return 'two'; }`,
+    "node_modules/barrel-lib/three.js": `export function Three() { return 'three'; }`,
+    "node_modules/barrel-lib/four.js": `export function Four() { return 'four'; }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("result: one,two,three");
+  },
+});
