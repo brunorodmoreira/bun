@@ -455,7 +455,10 @@ WebCoreOpaqueRoot root(MessagePort* port)
 
 void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
 {
-    if (!m_hasRef) {
+    // A closed (detached) port can never receive another message, so
+    // ref()ing it must not keep the event loop alive. Node.js behaves the
+    // same way: port.ref() after port.close() is a no-op.
+    if (!m_hasRef && !m_isDetached) {
         m_hasRef = true;
         ref();
         Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
